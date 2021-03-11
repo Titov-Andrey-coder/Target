@@ -1,0 +1,403 @@
+﻿<!DOCTYPE HTML>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <title>Моделирование траектории</title>
+  <link rel="stylesheet" type="text/css" href="http://js.arcgis.com/3.17/dijit/themes/soria/soria.css" />
+  <link rel="stylesheet" type="text/css" href="http://js.arcgis.com/3.17/esri/css/esri.css" />
+
+  <link rel="stylesheet" type="text/css" href="css/TOC.css" />
+  <link rel="stylesheet" type="text/css" href="css/buttons.css" />
+  <link rel="stylesheet" type="text/css" href="css/mes.css" />
+
+  <style type="text/css">
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+
+
+  <script type="text/javascript">
+    var dojoConfig = { parseOnLoad: true, packages: [{ "name": "sd", "location": location.pathname.replace(/\/[^/]+$/, "") + "/js/sd" }] };
+  </script>
+  <script type="text/javascript" src="http://js.arcgis.com/3.17/"></script>
+  <script type="text/javascript">
+    function CreateArcGisMap(divId, configURL, sconfigURL, onmapready, onsel, onerr, interf, theme)
+    {
+      require([
+        "dojo/_base/lang", "dojo/dom", "dojo/on", "dojo/dom-construct", "dojo/dom-class", "dojo/dom-style", "dojo/ready", "dojo/string",
+        "dijit/layout/BorderContainer", "dijit/layout/StackContainer", "dijit/layout/ContentPane", "dijit/form/Button", "dijit/Tooltip", "dijit/layout/TabContainer",
+        "dijit/Toolbar", "dijit/ToolbarSeparator", "dijit/form/TextBox", "dijit/form/Select",
+        "dijit/registry", "dojo/request/xhr", "dojo/dnd/move", "esri/map", "esri/graphic", "esri/geometry", "esri/geometry/Point", "esri/geometry/Extent", "esri/geometry/Polyline", "esri/toolbars/navigation", "esri/SpatialReference",
+        "esri/dijit/OverviewMap",
+        "esri/symbols/SimpleLineSymbol", "esri/symbols/PictureMarkerSymbol", "esri/Color", "esri/domUtils", "esri/dijit/Measurement", "esri/units", "esri/dijit/editing/Editor", "esri/dijit/editing/TemplatePicker", "esri/dijit/BasemapGallery",
+        "sd/sdwidgets/RadioToggleButton", "sd/MapConfig", "sd/sdwidgets/TOC", "sd/sdutils", "sd/Target", "esri/dijit/FeatureTable", "esri/tasks/query", "esri/geometry/Polyline", "dijit/form/HorizontalSlider", "dojo/domReady!", "dojo/sniff"],
+      function (lang, dom, on, DomConstruct, DomClass, DomStyle, ready, DString,
+        BorderContainer, StackContainer, ContentPane, Button, Tooltip, TabContainer,
+        Toolbar, ToolbarSeparator, TextBox, Select,
+        registry, xhr, Move, map, Graphic, Geometry, Point, Extent, Polyline, Navigation, SpatialReference,
+        OverviewMap,
+        SimpleLineSymbol, PictureMarkerSymbol, ESRIColor, esriUtils, Measurement, Units, Editor, TemplatePicker, BasemapGallery,
+        RadioToggleButton, MapConfig, TOC, sdutils, Target, FeatureTable, Query, Polyline, HorizontalSlider)
+      {
+        var mainWindow, mapDiv, aMap, mConfig, Toc, navToolbar, selectToolbar, mapMode,
+          measDiv, overviewDiv, measure, measureResult, toolsDiv,
+          editPane, modelPane, fTable,
+          pBar, toolsW, tPicker, editor, gallery, baseMapId, targetLayer, targets, maxTime, currentTime, timeStep, timer, scaleSelector;
+        const mToWM = 21612.0 / 12160.0;
+        //const velocity = 1000000.0 / 3600.0;
+        const ticInterval = 300.0;
+
+        function showError(err)
+        {
+          clearTimer();
+          console.log(err);
+          alert(err.error || err);
+        }
+
+        function clearTimer()
+        {
+          if (timer) clearInterval(timer);
+          timer = null;
+        }
+
+        function createLayout(divId)
+        {
+          mainWindow = new BorderContainer({ id: "sdMainWindow", class: "soria", design: 'headline', gutters: false, style: "height: 100%; width: 100%; margin: 0px; padding: 0px;" });
+          var tp = new ContentPane({ region: "top", class: "sdPanel" });
+          var tb = new Toolbar();
+          var rb = new RadioToggleButton({ id: "sdbNavigate", iconClass: "imgNav", showLabel: false, checked: true, tooltip: "Перемещение", onClick: function (evt) { activateTask('navigate'); } });
+          tb.addChild(rb);
+          b = new ToolbarSeparator();
+          tb.addChild(b);
+          var b = new RadioToggleButton({ id: "sdbMeasure", iconClass: "imgMeasure", showLabel: false, checked: false, tooltip: "Измерения", onClick: function () { activateTask('measure'); } });
+          tb.addChild(b);
+          b = new ToolbarSeparator();
+          tb.addChild(b);
+
+          //b = new Button({ id: "sdbTools", style: "float:right;", iconClass: "imgHideTools", showLabel: false, tooltip: "Правая панель", onClick: function () { showTools(); } });
+          //tb.addChild(b);
+
+          b = new RadioToggleButton({ id: "sdbModel", style: "float:right;", iconClass: "imgModel", showLabel: false, checked: true, tooltip: "Моделирование", groupName: "rPanelGr", onClick: function () { activatePage("sdModelPane"); } });
+          tb.addChild(b);
+          b = new RadioToggleButton({ id: "sdbEdit", style: "float:right;", iconClass: "imgEdit", showLabel: false, checked: false, tooltip: "Редактирование", groupName: "rPanelGr", onClick: function () { activatePage("sdEditPane"); } });
+          tb.addChild(b);
+          b = new RadioToggleButton({ id: "sdbBasemap", style: "float:right;", iconClass: "imgBasemaps", showLabel: false, checked: false, tooltip: "Базовая карта", groupName: "rPanelGr", onClick: function () { activatePage("sdBasemapPane"); } });
+          tb.addChild(b);
+          b = new RadioToggleButton({ id: "sdbLegend", style: "float:right;", iconClass: "imgLegend", showLabel: false, checked: false, tooltip: "Список слоев", groupName: "rPanelGr", onClick: function () { activatePage("sdLegDivWin"); } });
+          tb.addChild(b);
+          b = new ToolbarSeparator({ style: "float:right;" });
+          tb.addChild(b);
+          tp.addChild(tb);
+          mainWindow.addChild(tp);
+          var mp = new ContentPane({ id: "sdMapDiv", class: "sdPanel", style: "height: 100%; width: 100%;", region: "center" });
+          mainWindow.addChild(mp);
+          //var w = 25;
+          var tc = new StackContainer({ id: "sdToolsWin", class: "sdPanel", style: "width:25%; height: 100%", region: "right", splitter: true, minSize: 0, maxSize: 600, tabPosition: "bottom" });
+
+          var t = new ContentPane({ id: "sdLegDivWin", title: "Легенда", tooltip: "Содержание и легенда карты", style: "width: auto; height: auto; white-space: nowrap;" });
+          tc.addChild(t);
+          var t = new ContentPane({ id: "sdBasemapPane", title: "Базовая карта", tooltip: "Выбрать базовую карту", style: "width: auto; height: auto; white-space: nowrap;" });
+          tc.addChild(t);
+          editPane = new ContentPane({ id: "sdEditPane", class: "sdPanel", title: "Редактирование", tooltip: "Редактирование объектов" });
+          tc.addChild(editPane);
+
+          modelPane = new ContentPane({ id: "sdModelPane", class: "sdPanel", title: "Моделирование", tooltip: "Моделирование траектории" });
+          var tb = new Toolbar();
+          var rb = new RadioToggleButton({ id: "sdbPlay", iconClass: "imgPlay", showLabel: false, checked: false, tooltip: "Старт моделирования", onClick: function (evt) { continueTargets(); } });
+          tb.addChild(rb);
+          var rb = new RadioToggleButton({ id: "sdbPause", iconClass: "imgPause", showLabel: false, checked: false, tooltip: "Пауза", onClick: function (evt) { clearTimer(); } });
+          tb.addChild(rb);
+          var rb = new RadioToggleButton({ id: "sdbStop", iconClass: "imgStop", showLabel: false, checked: false, tooltip: "Стоп моделирования", onClick: function (evt) { clearTargets(); } });
+          tb.addChild(rb);
+          modelPane.addChild(tb);
+          pBar = new HorizontalSlider({ style: "width:80%; height: 24px", showButtons: false, discreteValues: 100, intermediateChanges: true });
+          modelPane.addChild(pBar);
+          scaleSelector = new Select({
+            style: "height: 20px; width: 80px;",
+            options: [
+            { label: "x 10", value: "10" },
+            { label: "x 50", value: "50" },
+            { label: "x 100", value: "100" },
+            { label: "x 500", value: "500", selected: true },
+            { label: "x 1000", value: "1000" }, { label: "x 5000", value: "5000" }]
+          });
+          scaleSelector.on("change", scaleChanged);
+          modelPane.addChild(scaleSelector);
+          tc.addChild(modelPane);
+
+          mainWindow.addChild(tp);
+          mainWindow.addChild(tc);
+          mainWindow.placeAt(divId);
+          mainWindow.startup();
+          DomConstruct.create("div", { id: "sdLegDiv" }, "sdLegDivWin");
+          toolsDiv = dom.byId("sdToolsWin");
+          setTooltips(tb);
+          activatePage("sdModelPane");
+
+        };
+
+        function setTooltips(w)
+        {
+          if (!w.getChildren) return;
+          var children = w.getChildren();
+          if ((!children) || (!children.length)) return
+          for (var i = 0; i < children.length; i++)
+          {
+            b = children[i];
+            if (b.tooltip)
+              var tt = new Tooltip({ connectId: b.id, label: b.tooltip, position: ["below", "after", "before", "above"] });
+          }
+        };
+
+        function showHelp()
+        {
+          try
+          {
+            newCurve();
+          }
+          catch (e)
+          {
+            showError(e);
+          }
+        }
+
+        ready(function ()
+        {
+          createLayout(divId);
+          xhr(configURL ? configURL : "mapconfig.xml").then(configLoaded, queryError);
+        });
+
+        function configLoaded(results)
+        {
+          mConfig = new MapConfig(results);
+          mConfig.on("map-config-loaded", mapConfigLoaded);
+          mConfig.prepareLayers();
+        }
+
+        function mapConfigLoaded(results)
+        {
+          try
+          {
+            DomConstruct.create("div", { id: "sdInMapDiv", style: "width: 100%; height: 100%; margin: 0; padding: 0;" }, "sdMapDiv");
+            mapDiv = dom.byId("sdInMapDiv");
+            aMap = new map("sdInMapDiv", { basemap: mConfig.baseMaps[0], logo: false, spatialReference: new SpatialReference(102100), extent: mConfig.initExtent, infoWindow: null });
+            mConfig.on('map-loaded', mapLoaded);
+            mConfig.addLayers(aMap);
+          }
+          catch (e)
+          {
+            showError(e);
+          }
+        };
+
+        function mapLoaded(evt)
+        {
+          try
+          {
+            if (mConfig.err) showError(mConfig.err);
+            navToolbar = new Navigation(aMap);
+            var baseTitle = mConfig.baseMaps.length ? mConfig.baseMaps[0].title : "";
+            Toc = new TOC({ map: aMap, slider: true, collapsed: true, baseTitle: baseTitle }, 'sdLegDiv');
+            Toc.startup();
+            var overviewMap = new OverviewMap({ map: aMap, expandFactor: 4, visible: true, attachTo: "top-right" });
+            overviewMap.startup();
+            DomConstruct.create("div", { id: "sdMeasDiv", style: "position:absolute; left:582px; top: 300px; z-index: 800; width: 140px; height: 145px;" }, mapDiv);
+            measDiv = dom.byId("sdMeasDiv");
+            new Move.parentConstrainedMoveable(measDiv, { within: true, area: "content" });
+            measure = new Measurement({ map: aMap, defaultAreaUnit: Units.SQUARE_METERS, defaultLengthUnit: Units.METERS }, DomConstruct.create("div", null, measDiv));
+            if (measure._unitDropDown && measure._unitDropDown.domNode)
+              esriUtils.hide(measure._unitDropDown.domNode);
+            measure.startup();
+            for (let i = 0; i < mConfig.targets.length;i++)
+            {
+              let templ = mConfig.targets[i];
+              templ.symbol = new PictureMarkerSymbol(templ.url, 24, 24);
+            }
+            esriUtils.hide(measDiv);
+            DomClass.add(measure.domNode, "mes");
+            mapMode = 'navigate';
+            var flayers = mConfig.getFeatureLayers();
+            targetLayer = flayers[0];
+            targetLayer.name = targetLayer.id;
+          }
+          catch (e)
+          {
+            showError(e);
+          }
+        }
+        function activatePage(pg)
+        {
+          var sc = registry.byId("sdToolsWin");
+          if (sc) sc.selectChild(pg, true);
+          if (pg == "sdEditPane")
+          {
+            clearTargets();
+            activateTask("navigate");
+            createEditor();
+          }
+          else if (pg == "sdBasemapPane")
+          {
+            changeBasemap();
+          }
+        }
+
+        function activateTask(tsk)
+        {
+          if (mapMode == tsk) return;
+          if (tsk != "measure")
+          {
+            measure.clearResult();
+            if (measure.activeTool)
+              measure.setTool(measure.activeTool, false);
+            esriUtils.hide(measDiv);
+          }
+          else
+          {
+            esriUtils.show(measDiv);
+            measure.setTool("distance", true);
+          }
+          mapMode = tsk;
+        }
+
+        function changeBasemap()
+        {
+          if (!gallery)
+          {
+            var d = dom.byId('sdBasemapPane');
+            DomConstruct.create("div", { id: "sdInBasemapDiv" }, d);
+            gallery = new BasemapGallery({
+              map: aMap, showArcGISBasemaps: false, basemaps: mConfig.baseMaps,
+              bingMapsKey: mConfig.bingKey
+            }, "sdInBasemapDiv");
+            gallery.on("selection-change", baseMapChanged);
+            gallery.startup();
+          }
+        }
+
+        function baseMapChanged(evt)
+        {
+          var bm = gallery.getSelected();
+          Toc.refresh(bm ? bm.title : "");
+        }
+
+        function queryError(err)
+        {
+          showError(err);
+        }
+
+        function createEditor()
+        {
+          if (tPicker) return;
+          var tDiv = DomConstruct.create("div", { id: "sdTemplDiv" }, dom.byId("sdEditPane"));
+          tPicker = new TemplatePicker({
+            featureLayers: [targetLayer], grouping: true, rows: "auto", columns: 3, style: "height: auto; width: 100%;"
+          }, dom.byId(sdTemplDiv));
+          tPicker.startup();
+          var eDiv = DomConstruct.create("div", { id: "sdEditDiv" }, dom.byId("sdEditPane"));
+          var linfos = mConfig.getFeatureLayerInfos();
+          var linfo = (linfos.length > 0) ? linfos[0] : {};
+          linfo.featureLayer.name = linfo.featureLayer.id;
+          editor = new Editor({ settings: { map: aMap, templatePicker: tPicker, layerInfos: [linfo], toolbarVisible: true, createOptions: {} } },
+            dom.byId("sdEditDiv"));
+          editor.startup();
+          var infoDiv = DomConstruct.create("div", { id: "sdInfoDiv" }, dom.byId("sdEditPane"));
+          fTable = new FeatureTable({ map: aMap, featureLayer: targetLayer, editable: false, outFields: ["TTYPE"] }, infoDiv);
+          fTable.startup();
+        }
+
+        //собственно моделирование
+        function newTargets()
+        {
+          aMap.graphics.clear();
+          targets = [];
+          var query = new Query();
+          query.outFields = ["*"];
+          query.where = "1=1";
+          targetLayer.queryFeatures(query, createTargets, queryError);
+        }
+
+        function continueTargets()
+        {
+          if (!targets)
+            newTargets();
+          else
+            timer = setInterval(modelStep, ticInterval);
+        }
+
+        function createTargets(featureSet)
+        {
+          maxTime = 0;
+          currentTime = 0;
+          for (let i = 0; i < featureSet.features.length; i++)
+          {
+            let f = featureSet.features[i];
+            let type = f.attributes["TTYPE"];
+            let templ = null;
+            for (let j = 0; (j < mConfig.targets.length) && (!templ) ; j++)
+            {
+              if (mConfig.targets[j].ttype == type)
+                templ = mConfig.targets[j];
+            }
+            templ = templ || { url: "", color: "#FF0000", velocity: "1000.0", angle:"0" };
+            let t = new Target(aMap, f, mToWM, parseFloat(templ.velocity), ESRIColor.fromHex(templ.color), templ.symbol, parseFloat(templ.angle));
+            targets.push(t);
+            let mx_time = t.curveTotLen / t.velocity; //seconds
+            if (mx_time > maxTime)
+              maxTime = mx_time;
+          }
+          scaleChanged();
+          continueTargets();
+        }
+
+        function modelStep()
+        {
+          currentTime += timeStep;
+          pBar.set("value", currentTime * 100.0 / maxTime);
+          //aMap.graphics.clear();
+          for (let i=0; i<targets.length;i++)
+            targets[i].drawCurve(currentTime);
+          if (currentTime > maxTime)
+            clearTimer();
+        }
+
+        function clearTargets()
+        {
+          clearTimer();
+          targets = null;
+          aMap.graphics.clear();
+          pBar.value = 0;
+        }
+
+        function scaleChanged()
+        {
+          let scale = parseFloat(scaleSelector.get("value"));
+          timeStep = scale / ticInterval;
+        }
+        //собственно моделирования
+
+      });
+    };
+
+    var GisMap = {};
+
+    function Start()
+    {
+      CreateArcGisMap(document.getElementById("arcGisDiv"));
+    }
+
+    function onErr(err)
+    {
+      console.log(err);
+      alert(err.error || err);
+    }
+
+  </script>
+</head>
+<body onload="Start()">
+  <div id="arcGisDiv" style="height: 100%; width: 100%; margin: 0; padding: 0;"></div>
+</body>
+</html>
